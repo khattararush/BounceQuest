@@ -1,0 +1,382 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bounce Quest</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+</head>
+<body>
+<script>
+let ball;
+let platforms = [];
+let gravity = 0.5;
+let bounceVelocity = -12;
+let touchStartX;
+let maxSpeed = 5;
+let k = 0.1; // Sensitivity of horizontal movement
+let prevY; // To store previous y position for collision detection
+let gameState = "start"; // Game states: "start", "playing", "gameOver"
+let button;
+let startTime; // To track the start time of the game
+let cameraY; // To handle vertical scrolling
+let bubbles = []; // For lava bubble effect
+let bubbleIcon = null; // For collectible bubble
+let shieldActive = false; // Bubble shield status
+let shieldStartTime; // To track shield duration
+let ballImg; // Variable to hold the ball image
+
+function preload() {
+  try {
+    console.log("Attempting to load zenitsu_bounce_quest.png");
+    ballImg = loadImage('zenitsu_bounce_quest.png');
+    console.log("Image loaded successfully");
+  } catch (error) {
+    console.error("Failed to load image:", error);
+    ballImg = null; // Set to null to trigger fallback
+  }
+}
+
+function setup() {
+  createCanvas(400, 600);
+  console.log("Canvas created: 400x600");
+  if (!ballImg) {
+    console.warn("Image failed to load, using red ball fallback");
+  }
+  button = createButton('Play');
+  button.position(width / 2 - 40, height / 2);
+  button.mousePressed(startOrRestartGame);
+  console.log("Setup complete, gameState: " + gameState);
+}
+
+function startOrRestartGame() {
+  gameState = "playing";
+  initGame();
+  button.hide();
+  console.log("Game started, gameState: " + gameState);
+}
+
+function initGame() {
+  ball = {
+    x: width / 2,
+    y: height - 50,
+    vx: 0,
+    vy: 0,
+    size: 20
+  };
+  platforms = [];
+  platforms.push({
+    x: width / 2 - 50,
+    y: height - 40,
+    w: 100,
+    h: 10
+  });
+  for (let i = 1; i < 6; i++) {
+    platforms.push({
+      x: random(0, width - 100),
+      y: height - 40 - i * 100,
+      w: 100,
+      h: 10
+    });
+  }
+  bubbles = [];
+  bubbleIcon = null;
+  shieldActive = false;
+  startTime = millis();
+  cameraY = height / 2;
+  console.log("Game initialized, platforms: " + platforms.length);
+}
+
+function draw() {
+  background(255); // White background
+  console.log("Draw loop, gameState: " + gameState);
+
+  // Draw radiating green edges
+  let glow = 128 + sin(frameCount * 0.1) * 64;
+  fill(0, 255, 0, glow);
+  rect(0, 0, 4, height); // Left edge
+  rect(width - 4, 0, 4, height); // Right edge
+
+  if (gameState === "start") {
+    textAlign(CENTER);
+    textSize(32);
+    fill(0);
+    text("Bounce Quest", width / 2, height / 2 - 50);
+    button.html('Play');
+    button.show();
+  } else if (gameState === "playing") {
+    button.hide();
+
+    // Store previous y position
+    prevY = ball.y;
+
+    // Apply gravity
+    ball.vy += gravity;
+    ball.y += ball.vy;
+
+    // Handle horizontal movement after 2 seconds
+    let elapsedTime = millis() - startTime;
+    if (elapsedTime > 2000) {
+      if (mouseIsPressed || touches.length > 0) {
+        let touchX = touches.length > 0 ? touches[0].x : mouseX;
+        if (!touchStartX) touchStartX = touchX;
+        let deltaX = touchX - touchStartX;
+        ball.vx = constrain(k * deltaX, -maxSpeed, maxSpeed);
+      } else {
+        touchStartX = null;
+        ball.vx = 0;
+      }
+    } else {
+      ball.vx = 0;
+    }
+    ball.x += ball.vx;
+
+    // Wrap-around for ball at screen edges
+    if (ball.x < 0) {
+      ball.x += width;
+    } else if (ball.x > width) {
+      ball.x -= width;
+    }
+
+    // Update cameraY when ball reaches midpoint, only moving upwards
+    if (ball.y < cameraY) {
+      cameraY = min(cameraY, ball.y);
+    }
+
+    // Generate new platforms
+    let highestPlatformY = min(...platforms.map(p => p.y));
+    if (cameraY - highestPlatformY < height) {
+      platforms.push({
+        x: random(0, width - 100),
+        y: highestPlatformY - 100,
+        w: 100,
+        h: 10
+      });
+      console.log("Added new platform, total: " + platforms.length);
+    }
+
+    // Remove platforms far below
+    for (let i = platforms.length - 1; i >= 0; i--) {
+      if (platforms[i].y > cameraY + height / 2 + 100) {
+        platforms.splice(i, 1);
+      }
+    }
+
+    // Spawn bubble icon above current screen if none exists and shield is inactive
+    if (!bubbleIcon && !shieldActive && random() < 0.05) {
+      bubbleIcon = {
+        x: random(50, width - 50),
+        y: highestPlatformY - 50, // Above highest platform
+        size: 20
+      };
+      console.log("Bubble icon spawned at x: " + bubbleIcon.x + ", y: " + bubbleIcon.y);
+    }
+
+    // Check bubble icon collision
+    if (bubbleIcon) {
+      let dx = ball.x - bubbleIcon.x;
+      if (dx > width / 2) dx -= width;
+      if (dx < -width / 2) dx += width;
+      let dy = ball.y - bubbleIcon.y;
+      if (sqrt(dx * dx + dy * dy) < (ball.size + bubbleIcon.size) / 2) {
+        bubbleIcon = null; // Burst bubble
+        shieldActive = true;
+        shieldStartTime = millis();
+        console.log("Bubble collected, shield activated");
+      }
+    }
+
+    // Disable shield after 10 seconds
+    if (shieldActive && millis() - shieldStartTime > 10000) {
+      shieldActive = false;
+      console.log("Shield expired");
+    }
+
+    // Update lava bubbles
+    if (frameCount % 10 === 0) {
+      bubbles.push({
+        x: random(0, width),
+        y: cameraY + height / 2,
+        size: random(5, 15),
+        vy: random(-1, -0.5)
+      });
+    }
+    for (let i = bubbles.length - 1; i >= 0; i--) {
+      bubbles[i].y += bubbles[i].vy;
+      bubbles[i].size *= 0.98;
+      if (bubbles[i].size < 1 || bubbles[i].y < cameraY + height / 2 - 50) {
+        bubbles.splice(i, 1);
+      }
+    }
+
+    // Translate the canvas for camera scrolling
+    push();
+    translate(0, height / 2 - cameraY);
+
+    // Check collisions with platforms
+    for (let p of platforms) {
+      let collision = (
+        ball.x > p.x &&
+        ball.x < p.x + p.w &&
+        prevY + ball.size / 2 <= p.y &&
+        ball.y + ball.size / 2 > p.y &&
+        ball.vy > 0
+      );
+      if (!collision && ball.x > width - ball.size / 2) {
+        collision = (
+          ball.x - width > p.x &&
+          ball.x - width < p.x + p.w &&
+          prevY + ball.size / 2 <= p.y &&
+          ball.y + ball.size / 2 > p.y &&
+          ball.vy > 0
+        );
+      }
+      if (!collision && ball.x < ball.size / 2) {
+        collision = (
+          ball.x + width > p.x &&
+          ball.x + width < p.x + p.w &&
+          prevY + ball.size / 2 <= p.y &&
+          ball.y + ball.size / 2 > p.y &&
+          ball.vy > 0
+        );
+      }
+      if (collision) {
+        ball.vy = bounceVelocity;
+      }
+      fill(100);
+      rect(p.x, p.y, p.w, p.h);
+    }
+
+    // Check collision with lava if shield is active
+    if (shieldActive && prevY + ball.size / 2 <= cameraY + height / 2 && ball.y + ball.size / 2 > cameraY + height / 2 && ball.vy > 0) {
+      ball.vy = bounceVelocity;
+    }
+
+    // Draw bubble icon
+    if (bubbleIcon) {
+      fill(0, 100, 255, 150); // Semi-transparent blue
+      ellipse(bubbleIcon.x, bubbleIcon.y, bubbleIcon.size);
+    }
+
+    // Draw ball image and shield
+    if (ballImg) {
+      // Scale and draw the image centered at ball position
+      push();
+      translate(ball.x, ball.y);
+      imageMode(CENTER);
+      image(ballImg, 0, 0, ball.size, ball.size); // Scale to ball.size (20px)
+      pop();
+      if (shieldActive) {
+        fill(0, 100, 255, 100); // Semi-transparent shield
+        ellipse(ball.x, ball.y, ball.size * 1.5);
+      }
+    } else {
+      // Fallback to red circle if image fails to load
+      fill(255, 0, 0);
+      ellipse(ball.x, ball.y, ball.size);
+      if (shieldActive) {
+        fill(0, 100, 255, 100);
+        ellipse(ball.x, ball.y, ball.size * 1.5);
+      }
+    }
+
+    // Draw lava effect
+    let lavaTop = cameraY + height / 2 - 50;
+    for (let y = lavaTop; y <= cameraY + height / 2 + 50; y += 2) {
+      for (let x = 0; x < width; x += 5) {
+        let wave1 = sin((x + frameCount * 2) * 0.05 + y * 0.1) * 5;
+        let wave2 = sin((x - frameCount * 1.5) * 0.03 + y * 0.15) * 3;
+        let offset = wave1 + wave2;
+        let gradient = map(y, lavaTop, cameraY + height / 2 + 50, 0, 1);
+        let lavaColor;
+        if (gradient < 0.3) {
+          lavaColor = lerpColor(color(255, 0, 0), color(255, 69, 0), gradient / 0.3);
+        } else if (gradient < 0.7) {
+          lavaColor = lerpColor(color(255, 69, 0), color(255, 165, 0), (gradient - 0.3) / 0.4);
+        } else {
+          lavaColor = lerpColor(color(255, 165, 0), color(255, 255, 0), (gradient - 0.7) / 0.3);
+        }
+        fill(lavaColor);
+        rect(x, y + offset, 5, 2);
+      }
+    }
+
+    // Draw lava bubbles
+    for (let b of bubbles) {
+      fill(255, 255, 0, 150);
+      ellipse(b.x, b.y, b.size);
+    }
+
+    pop();
+
+    // Game over if ball falls into lava without shield
+    if (!shieldActive && ball.y > cameraY + height / 2) {
+      gameState = "gameOver";
+      console.log("Game over, ball.y: " + ball.y + ", cameraY: " + cameraY);
+    }
+  } else if (gameState === "gameOver") {
+    textAlign(CENTER);
+    textSize(32);
+    fill(255, 0, 0);
+    text("Game Over", width / 2, height / 2 - 50);
+    button.html('Play Again');
+    button.show();
+  }
+}
+
+// Handle touch/mouse release
+function mouseReleased() {
+  if (gameState === "playing") {
+    touchStartX = null;
+    ball.vx = 0;
+  }
+}
+
+function touchEnded() {
+  if (gameState === "playing") {
+    touchStartX = null;
+    ball.vx = 0;
+  }
+}
+</script>
+</body>
+</html>
